@@ -38,7 +38,7 @@ public class PropertiesExtractorMojo extends AbstractMojo {
 
     private static final String VALUE_ANNOTATION = Value.class.getCanonicalName();
 
-    private static final Pattern AT_VALUE_FORMAT = Pattern.compile("\\{(?<expression>.*)\\}");
+    private static final Pattern AT_VALUE_FORMAT = Pattern.compile("\\$\\{(?<expression>.*)\\}");
 
     @Parameter(property = "package.scan")
     private String packageScan;
@@ -50,24 +50,15 @@ public class PropertiesExtractorMojo extends AbstractMojo {
     public void execute() throws MojoExecutionException {
         getLog().info("firing up");
         List<String> elementsToBeScanned = null;
-
         try {
-            List runtimeClasspathElements = project.getRuntimeClasspathElements();
-            URL[] runtimeUrls = new URL[runtimeClasspathElements.size()];
-            for (int i = 0; i < runtimeClasspathElements.size(); i++) {
-                String element = (String) runtimeClasspathElements.get(i);
-                runtimeUrls[i] = new File(element).toURI().toURL();
+                        List combinedRunTimeAndCompileTimeClasspathElements = project.getCompileClasspathElements();
+            combinedRunTimeAndCompileTimeClasspathElements.addAll(project.getRuntimeClasspathElements());
+            URL[] classpathUrls = new URL[combinedRunTimeAndCompileTimeClasspathElements.size()];
+            for (int i = 0; i < combinedRunTimeAndCompileTimeClasspathElements.size(); i++) {
+                String element = (String) combinedRunTimeAndCompileTimeClasspathElements.get(i);
+                classpathUrls[i] = new File(element).toURI().toURL();
             }
-            URLClassLoader runtimeLoader = new URLClassLoader(runtimeUrls,
-                    Thread.currentThread().getContextClassLoader());
-
-            List compileClasspathElements = project.getCompileClasspathElements();
-            URL[] compileTimeUrl = new URL[compileClasspathElements.size()];
-            for (int i = 0; i < compileClasspathElements.size(); i++) {
-                String element = (String) compileClasspathElements.get(i);
-                compileTimeUrl[i] = new File(element).toURI().toURL();
-            }
-            URLClassLoader compileTimeLoader = new URLClassLoader(compileTimeUrl,
+            URLClassLoader combinedLoader = new URLClassLoader(classpathUrls,
                     Thread.currentThread().getContextClassLoader());
             elementsToBeScanned = project.getCompileClasspathElements();
             elementsToBeScanned.addAll(project.getRuntimeClasspathElements());
@@ -82,15 +73,13 @@ public class PropertiesExtractorMojo extends AbstractMojo {
             List<ClassLoader> classLoadersList = new LinkedList<ClassLoader>();
             classLoadersList.add(ClasspathHelper.contextClassLoader());
             classLoadersList.add(ClasspathHelper.staticClassLoader());
-            classLoadersList.add(runtimeLoader);
-            classLoadersList.add(compileTimeLoader);
-            getLog().info("ctx classloader: " + ClasspathHelper.contextClassLoader());
-            getLog().info("static classloader: " + ClasspathHelper.staticClassLoader());
-            getLog().info("runtimeLoader : " + runtimeLoader);
-            getLog().info("compileTimeLoader : " + compileTimeLoader);
+            classLoadersList.add(combinedLoader);
+            getLog().debug("ctx classloader: " + ClasspathHelper.contextClassLoader());
+            getLog().debug("static classloader: " + ClasspathHelper.staticClassLoader());
+            getLog().debug("combinedLoader : " + combinedLoader);
 
 
-            System.out.print("packagescan: " + packageScan + " projectClasspath" + projectClasspathList.stream().map(s -> s.toString()).collect(Collectors.toList()));
+            getLog().debug("packagescan: " + packageScan + " projectClasspath" + projectClasspathList.stream().map(s -> s.toString()).collect(Collectors.toList()));
             Class<Value> springAtValueAnnotation = Value.class;
             Reflections reflections = new Reflections(new ConfigurationBuilder()
 
@@ -103,9 +92,9 @@ public class PropertiesExtractorMojo extends AbstractMojo {
                             new FieldAnnotationsScanner().filterResultsBy(input -> VALUE_ANNOTATION.equals(input)),
                             new SubTypesScanner(false)
                     }));
-            Set<String> propertyExpressions = reflections.getAllTypes();
-            for (String s : propertyExpressions) {
-                getLog().info(s);
+            Set<ClassExpressionTuple> propertyExpressions = new HashSet<>();
+            for (ClassExpressionTuple s : propertyExpressions) {
+                getLog().info("raw: " + s.toString());
             }
 
 
@@ -119,13 +108,13 @@ public class PropertiesExtractorMojo extends AbstractMojo {
                 java.lang.reflect.Parameter[] parameters = method.getParameters();
                 if (method.getParameters().length == 1 && method.isAnnotationPresent(springAtValueAnnotation)) {
                     getLog().debug("found atValue on method");
-                    propertyExpressions.add(method.getAnnotation(springAtValueAnnotation).value());
+                    propertyExpressions.add(new ClassExpressionTuple(method.getDeclaringClass(), method.getAnnotation(springAtValueAnnotation).value()));
                 } else {
                     for (java.lang.reflect.Parameter parameter : parameters) {
                         if (parameter.isAnnotationPresent(springAtValueAnnotation)) {
                             getLog().debug("found atValue on methodParam");
 
-                            propertyExpressions.add(parameter.getAnnotation(springAtValueAnnotation).value());
+                            propertyExpressions.add(new ClassExpressionTuple(method.getDeclaringClass(), parameter.getAnnotation(springAtValueAnnotation).value()));
                         }
                     }
                 }
@@ -136,25 +125,28 @@ public class PropertiesExtractorMojo extends AbstractMojo {
                     if (parameter.isAnnotationPresent(springAtValueAnnotation)) {
                         getLog().debug("found atValue on constructorParam");
 
-                        propertyExpressions.add(parameter.getAnnotation(springAtValueAnnotation).value());
+                        propertyExpressions.add(new ClassExpressionTuple(constructor.getDeclaringClass(), parameter.getAnnotation(springAtValueAnnotation).value()));
                     }
                 }
             }
-            propertyExpressions.addAll(fields.stream().map(field -> field.getAnnotation(springAtValueAnnotation).value()).collect(Collectors.toList()));
+            propertyExpressions.addAll(fields.stream().map(field -> new ClassExpressionTuple(field.getDeclaringClass(), field.getAnnotation(springAtValueAnnotation).value())).collect(Collectors.toList()));
             Map<String, PropertyExpressionData> expressions = new HashMap<>();
-            for (String expression : propertyExpressions) {
-                Matcher matcher = AT_VALUE_FORMAT.matcher(expression);
+            for (ClassExpressionTuple expression : propertyExpressions) {
+                Matcher matcher = AT_VALUE_FORMAT.matcher(expression.getExpression());
                 if (matcher.find()) {
                     String found = matcher.group("expression");
                     String[] resultAfterSplit = found.split(":");
                     PropertyExpressionData data = new PropertyExpressionData(resultAfterSplit[0]);
                     if (resultAfterSplit.length == 2) {
-                        data.pushDefaultValue(resultAfterSplit[1]);
+                        data.pushDefaultValue(resultAfterSplit[1]).pushClass(expression.getCls().getSimpleName());
                     }
-                    if (expressions.containsKey(resultAfterSplit[0]) && data.hasDefaultValues()) {
-                        expressions.get(resultAfterSplit[0]).pushDefaultValue(data.getDefaultValuesAsString());
+                    if (expressions.containsKey(resultAfterSplit[0])) {
+                        expressions.get(resultAfterSplit[0]).pushClass(expression.getCls().getSimpleName());
+                        if (data.hasDefaultValues()) {
+                            expressions.get(resultAfterSplit[0]).pushDefaultValue(data.getDefaultValuesAsString());
+                        }
                     } else {
-                        expressions.put(resultAfterSplit[0], data);
+                        expressions.put(resultAfterSplit[0], data.pushClass(expression.getCls().getSimpleName()));
                     }
                 }
             }
@@ -174,14 +166,61 @@ public class PropertiesExtractorMojo extends AbstractMojo {
         }
     }
 
+    private static class ClassExpressionTuple {
+        private Class<?> cls;
+        private String expression;
+
+        ClassExpressionTuple(Class<?> cls, String expression) {
+            this.cls = cls;
+            this.expression = expression;
+        }
+
+        public Class<?> getCls() {
+            return cls;
+        }
+
+        public String getExpression() {
+            return expression;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (o == null || getClass() != o.getClass()) return false;
+
+            ClassExpressionTuple that = (ClassExpressionTuple) o;
+
+            if (cls != null ? !cls.equals(that.cls) : that.cls != null) return false;
+            return expression != null ? expression.equals(that.expression) : that.expression == null;
+
+        }
+
+        @Override
+        public int hashCode() {
+            int result = cls != null ? cls.hashCode() : 0;
+            result = 31 * result + (expression != null ? expression.hashCode() : 0);
+            return result;
+        }
+
+        @Override
+        public String toString() {
+            return "ClassExpressionTuple{" +
+                    "cls=" + cls +
+                    ", expression='" + expression + '\'' +
+                    '}';
+        }
+    }
+
     private static class PropertyExpressionData {
 
         private static final String REPLACE_ME = "#<replace-me>";
 
-        private static final String FORMAT = "#default values are: %1$s\n" +
-                "%2$s%3$s=@%3$s@\n";
+        private static final String FORMAT = "#default values are: '%1$s', found in classes: %2$s\n" +
+                "%3$s%4$s=@%4$s@\n";
         private String expression;
         private Set<String> defaultValues = new HashSet<>();
+        private Set<String> classes = new HashSet<>();
+
 
         PropertyExpressionData(String expression) {
             Assert.notNull(expression);
@@ -192,16 +231,27 @@ public class PropertiesExtractorMojo extends AbstractMojo {
             return !defaultValues.isEmpty();
         }
 
-        public void pushDefaultValue(String value) {
+        public PropertyExpressionData pushDefaultValue(String value) {
             this.defaultValues.add(value);
+            return this;
         }
 
+        public PropertyExpressionData pushClass(String cls) {
+            this.classes.add(cls);
+            return this;
+        }
+
+
         public String getDefaultValuesAsString() {
-            return Joiner.on(", ").join(defaultValues);
+            return Joiner.on("', '").join(defaultValues);
         }
 
         public String render() {
-            return String.format(FORMAT, hasDefaultValues() ? getDefaultValuesAsString() : "none set", hasDefaultValues() ? REPLACE_ME : "", expression);
+            return String.format(FORMAT,
+                    hasDefaultValues() ? getDefaultValuesAsString() : "none set",
+                    Joiner.on(", ").join(classes),
+                    hasDefaultValues() ? REPLACE_ME : "",
+                    expression);
         }
 
         @Override
