@@ -155,8 +155,9 @@ public class PropertiesExtractorMojo extends AbstractMojo {
             getLog().info("found:  " + expressions.size());
             String outBase = project.getBuild().getOutputDirectory();
             File out = new File(outBase + "/../template.properties");
-            for (PropertyExpressionData data : expressions.values()) {
-                Files.append(data.render(), out, Charset.forName("UTF-8"));
+            List<String> sortedExpression = expressions.keySet().stream().sorted().collect(Collectors.toList());
+            for (String key : sortedExpression) {
+                Files.append(expressions.get(key).render(), out, Charset.forName("UTF-8"));
             }
 
         } catch (DependencyResolutionRequiredException e) {
