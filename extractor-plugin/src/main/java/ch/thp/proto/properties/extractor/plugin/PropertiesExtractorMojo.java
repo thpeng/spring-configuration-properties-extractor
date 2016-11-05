@@ -1,4 +1,4 @@
-package ch.thp.proto.properties.extractor;
+package ch.thp.proto.properties.extractor.plugin;
 
 import com.google.common.base.Joiner;
 import com.google.common.io.Files;
