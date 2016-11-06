@@ -1,7 +1,7 @@
 package ch.thp.prot.properties.extractor.api;
 
 
-public enum PropertyIsApplicableFor {
+public enum PropertyScope {
     /**
      * no information given
      */

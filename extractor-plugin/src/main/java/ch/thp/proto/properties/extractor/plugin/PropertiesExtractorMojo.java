@@ -1,6 +1,6 @@
 package ch.thp.proto.properties.extractor.plugin;
 
-import ch.thp.prot.properties.extractor.api.PropertyIsApplicableFor;
+import ch.thp.prot.properties.extractor.api.PropertyScope;
 import ch.thp.prot.properties.extractor.api.ValueContext;
 import com.google.common.base.Joiner;
 import com.google.common.io.Files;
@@ -52,7 +52,6 @@ public class PropertiesExtractorMojo extends AbstractMojo {
     private MavenProject project;
 
     public void execute() throws MojoExecutionException {
-        getLog().info("firing up");
         List<String> elementsToBeScanned = null;
         try {
                         List combinedRunTimeAndCompileTimeClasspathElements = project.getCompileClasspathElements();
@@ -141,13 +140,13 @@ public class PropertiesExtractorMojo extends AbstractMojo {
                     field.getAnnotation(springAtValueAnnotation).value(), field.getAnnotation(ValueContext.class))).collect(Collectors.toList()));
             Map<String, PropertyExpressionData> expressions = new HashMap<>();
             for (ClassExpressionTuple expression : propertyExpressions) {
-                getLog().error(expression.toString());
+                getLog().debug(expression.toString());
                 Matcher matcher = AT_VALUE_FORMAT.matcher(expression.getExpression());
                 if (matcher.find()) {
                     String found = matcher.group("expression");
                     String[] resultAfterSplit = found.split(":");
                     PropertyExpressionData data = new PropertyExpressionData(resultAfterSplit[0],
-                            expression.getValueContext() == null ? PropertyIsApplicableFor.NOT_SPECIFIED :
+                            expression.getValueContext() == null ? PropertyScope.NOT_SPECIFIED :
                                     expression.getValueContext().value());
                     if (resultAfterSplit.length == 2) {
                         data.pushDefaultValue(resultAfterSplit[1]).pushClass(expression.getCls().getSimpleName());
@@ -161,20 +160,17 @@ public class PropertiesExtractorMojo extends AbstractMojo {
                         expressions.put(resultAfterSplit[0], data.pushClass(expression.getCls().getSimpleName()));
                     }
                     if (expression.getValueContext() != null) {
-                        getLog().error("found valuecontext");
                         expressions.get(resultAfterSplit[0]).pushDescription(expression.getValueContext().description());
                     }
                 }
             }
-            getLog().info("found raw:  " + propertyExpressions.size());
-
-            getLog().info("found:  " + expressions.size());
             String outBase = project.getBuild().getOutputDirectory();
             File out = new File(outBase + "/../template.properties");
             List<String> sortedExpression = expressions.keySet().stream().sorted().collect(Collectors.toList());
             for (String key : sortedExpression) {
                 Files.append(expressions.get(key).render(), out, Charset.forName("UTF-8"));
             }
+            getLog().info("found total expressions: " + propertyExpressions.size() + ", processed number of unique expressions: " + expressions.size() + ", to target file " + out.getAbsolutePath());
 
         } catch (DependencyResolutionRequiredException e) {
             new MojoExecutionException("Dependency resolution failed", e);
@@ -245,14 +241,14 @@ public class PropertiesExtractorMojo extends AbstractMojo {
         private String expression;
         private Set<String> defaultValues = new HashSet<>();
         private Set<String> classes = new HashSet<>();
-        private PropertyIsApplicableFor propertyIsApplicableFor;
+        private PropertyScope propertyScope;
         private Set<String> descriptions = new HashSet<>();
 
 
-        PropertyExpressionData(@Nonnull String expression, @Nullable PropertyIsApplicableFor propertyIsApplicableFor) {
+        PropertyExpressionData(@Nonnull String expression, @Nullable PropertyScope propertyScope) {
             Assert.notNull(expression);
             this.expression = expression;
-            this.propertyIsApplicableFor = propertyIsApplicableFor;
+            this.propertyScope = propertyScope;
         }
 
         public boolean hasDefaultValues() {
@@ -281,7 +277,7 @@ public class PropertiesExtractorMojo extends AbstractMojo {
 
         public String render() {
             return String.format(FORMAT,
-                    propertyIsApplicableFor,
+                    propertyScope,
                     hasDefaultValues() ? getDefaultValuesAsString() : "none set",
                     Joiner.on(", ").join(classes),
                     Joiner.on("', '").join(descriptions),

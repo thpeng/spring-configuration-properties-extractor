@@ -11,7 +11,7 @@ import java.lang.annotation.Target;
 @Retention(RetentionPolicy.RUNTIME)
 @Target({ElementType.FIELD, ElementType.METHOD, ElementType.CONSTRUCTOR, ElementType.PARAMETER})
 public @interface ValueContext {
-    public PropertyIsApplicableFor value() default PropertyIsApplicableFor.NOT_SPECIFIED;
+    public PropertyScope value() default PropertyScope.NOT_SPECIFIED;
 
     public String description() default "";
 
