@@ -40,6 +40,10 @@
             <groupId>${project.parent.groupId}</groupId>
             <artifactId>spring-configuration-properties-extractor-api</artifactId>
         </dependency>
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-ooxml</artifactId>
+        </dependency>
     </dependencies>
     <build>
         <plugins>

@@ -9,6 +9,13 @@ import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugins.annotations.*;
 import org.apache.maven.project.MavenProject;
+import org.apache.poi.ss.usermodel.CellStyle;
+import org.apache.poi.ss.usermodel.FillPatternType;
+import org.apache.poi.ss.usermodel.IndexedColors;
+import org.apache.poi.xssf.usermodel.XSSFCell;
+import org.apache.poi.xssf.usermodel.XSSFRow;
+import org.apache.poi.xssf.usermodel.XSSFSheet;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.reflections.Reflections;
 import org.reflections.scanners.FieldAnnotationsScanner;
 import org.reflections.scanners.MethodAnnotationsScanner;
@@ -23,6 +30,7 @@ import org.springframework.util.Assert;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
@@ -46,6 +54,8 @@ public class PropertiesExtractorMojo extends AbstractMojo {
 
     @Parameter(property = "package.scan")
     private String packageScan;
+    @Parameter(property = "environments")
+    private String environments;
 
 
     @Component
@@ -149,27 +159,80 @@ public class PropertiesExtractorMojo extends AbstractMojo {
                             expression.getValueContext() == null ? PropertyScope.NOT_SPECIFIED :
                                     expression.getValueContext().value());
                     if (resultAfterSplit.length == 2) {
+                        getLog().debug("found tokens: " + resultAfterSplit);
                         data.pushDefaultValue(resultAfterSplit[1]).pushClass(expression.getCls().getSimpleName());
                     }
                     if (expressions.containsKey(resultAfterSplit[0])) {
                         expressions.get(resultAfterSplit[0]).pushClass(expression.getCls().getSimpleName());
+                        getLog().debug("key exists: " + resultAfterSplit[0]);
                         if (data.hasDefaultValues()) {
                             expressions.get(resultAfterSplit[0]).pushDefaultValue(data.getDefaultValuesAsString());
+                            getLog().debug("adding default value: " + data.getDefaultValuesAsString());
                         }
                     } else {
                         expressions.put(resultAfterSplit[0], data.pushClass(expression.getCls().getSimpleName()));
+                        getLog().debug("adding new data : " + expression + " cls:" + expression.getCls().getSimpleName());
                     }
                     if (expression.getValueContext() != null) {
                         expressions.get(resultAfterSplit[0]).pushDescription(expression.getValueContext().description());
+                        getLog().debug("adding ValueContext: " + expression.getValueContext());
                     }
                 }
             }
             String outBase = project.getBuild().getOutputDirectory();
             File out = new File(outBase + "/../template.properties");
             List<String> sortedExpression = expressions.keySet().stream().sorted().collect(Collectors.toList());
-            for (String key : sortedExpression) {
-                Files.append(expressions.get(key).render(), out, Charset.forName("UTF-8"));
+            XSSFWorkbook workbook = new XSSFWorkbook();
+            XSSFSheet sheet = workbook.createSheet();
+            String[] environmentsFound;
+            if (environments == null) {
+                environmentsFound = new String[]{"ref"};
+
+            } else {
+                environmentsFound = environments.split(",");
             }
+            XSSFRow headerRow = sheet.createRow(0);
+            headerRow.createCell(0).setCellValue("Expression");
+            headerRow.createCell(1).setCellValue("Scope");
+            headerRow.createCell(2).setCellValue("Default values");
+            for (int j = 3; j < 3 + environmentsFound.length; j++) {
+                headerRow.createCell(j).setCellValue(environmentsFound[j - 3]);
+            }
+            headerRow.createCell(3 + environmentsFound.length).setCellValue("On classes found");
+            headerRow.createCell(4 + environmentsFound.length).setCellValue("Description");
+
+            CellStyle red = workbook.createCellStyle();
+            red.setFillBackgroundColor(IndexedColors.RED.getIndex());
+            red.setFillPattern(FillPatternType.SOLID_FOREGROUND);
+
+            CellStyle green = workbook.createCellStyle();
+            green.setFillBackgroundColor(IndexedColors.LIGHT_GREEN.getIndex());
+            green.setFillPattern(FillPatternType.SOLID_FOREGROUND);
+
+            for (int rowNo = 1; rowNo < sortedExpression.size(); rowNo++) {
+                String key = sortedExpression.get(rowNo);
+                PropertyExpressionData data = expressions.get(key);
+                Files.append(data.render(), out, Charset.forName("UTF-8"));
+                XSSFRow row = sheet.createRow(rowNo);
+                row.createCell(0).setCellValue(data.getExpression());
+                row.createCell(1).setCellValue(data.getPropertyScope().toString());
+                row.createCell(2).setCellValue(data.getDefaultValuesAsString());
+                for (int envNo = 3; envNo < 3 + environmentsFound.length; envNo++) {
+                    XSSFCell cell = row.createCell(envNo);
+                    cell.setCellValue("");
+                    if (data.hasDefaultValues()) {
+                        cell.setCellStyle(green);
+                    } else {
+                        cell.setCellStyle(red);
+                    }
+                }
+                row.createCell(3 + environmentsFound.length).setCellValue(data.getClassesAsString());
+                row.createCell(4 + environmentsFound.length).setCellValue(data.getDescriptionsAsString());
+
+            }
+            FileOutputStream fileOut = new FileOutputStream(outBase + "/../template.xlsx");
+            workbook.write(fileOut);
+            fileOut.close();
             getLog().info("found total expressions: " + propertyExpressions.size() + ", processed number of unique expressions: " + expressions.size() + ", to target file " + out.getAbsolutePath());
 
         } catch (DependencyResolutionRequiredException e) {
@@ -270,17 +333,32 @@ public class PropertiesExtractorMojo extends AbstractMojo {
             return this;
         }
 
+        public String getExpression() {
+            return expression;
+        }
+
+        public PropertyScope getPropertyScope() {
+            return propertyScope;
+        }
 
         public String getDefaultValuesAsString() {
-            return Joiner.on("', '").join(defaultValues);
+            return Joiner.on(", ").skipNulls().join(defaultValues);
+        }
+
+        public String getDescriptionsAsString() {
+            return Joiner.on(", ").skipNulls().join(descriptions);
+        }
+
+        public String getClassesAsString() {
+            return Joiner.on(", ").skipNulls().join(classes);
         }
 
         public String render() {
             return String.format(FORMAT,
                     propertyScope,
                     hasDefaultValues() ? getDefaultValuesAsString() : "none set",
-                    Joiner.on(", ").join(classes),
-                    Joiner.on("', '").join(descriptions),
+                    getClassesAsString(),
+                    getDescriptionsAsString(),
                     hasDefaultValues() ? REPLACE_ME : "",
                     expression);
         }
