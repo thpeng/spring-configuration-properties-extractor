@@ -9,9 +9,9 @@ import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugins.annotations.*;
 import org.apache.maven.project.MavenProject;
+import org.apache.poi.hssf.util.HSSFColor;
 import org.apache.poi.ss.usermodel.CellStyle;
 import org.apache.poi.ss.usermodel.FillPatternType;
-import org.apache.poi.ss.usermodel.IndexedColors;
 import org.apache.poi.xssf.usermodel.XSSFCell;
 import org.apache.poi.xssf.usermodel.XSSFRow;
 import org.apache.poi.xssf.usermodel.XSSFSheet;
@@ -202,15 +202,16 @@ public class PropertiesExtractorMojo extends AbstractMojo {
             headerRow.createCell(4 + environmentsFound.length).setCellValue("Description");
 
             CellStyle red = workbook.createCellStyle();
-            red.setFillBackgroundColor(IndexedColors.RED.getIndex());
             red.setFillPattern(FillPatternType.SOLID_FOREGROUND);
+            red.setFillForegroundColor(HSSFColor.RED.index);
 
             CellStyle green = workbook.createCellStyle();
-            green.setFillBackgroundColor(IndexedColors.LIGHT_GREEN.getIndex());
             green.setFillPattern(FillPatternType.SOLID_FOREGROUND);
+            green.setFillForegroundColor(HSSFColor.LIGHT_GREEN.index);
 
-            for (int rowNo = 1; rowNo < sortedExpression.size(); rowNo++) {
-                String key = sortedExpression.get(rowNo);
+
+            for (int rowNo = 1; rowNo < sortedExpression.size() + 1; rowNo++) {
+                String key = sortedExpression.get(rowNo - 1);
                 PropertyExpressionData data = expressions.get(key);
                 Files.append(data.render(), out, Charset.forName("UTF-8"));
                 XSSFRow row = sheet.createRow(rowNo);
@@ -356,7 +357,7 @@ public class PropertiesExtractorMojo extends AbstractMojo {
         public String render() {
             return String.format(FORMAT,
                     propertyScope,
-                    hasDefaultValues() ? getDefaultValuesAsString() : "none set",
+                    hasDefaultValues() ? getDefaultValuesAsString() : "NONE SET!",
                     getClassesAsString(),
                     getDescriptionsAsString(),
                     hasDefaultValues() ? REPLACE_ME : "",
