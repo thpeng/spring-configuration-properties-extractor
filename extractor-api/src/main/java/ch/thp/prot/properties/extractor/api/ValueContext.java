@@ -8,10 +8,10 @@ import java.lang.annotation.Target;
 /**
  * adds context to a field, param (constructor or method). should be used with a spring @Value annotation
  */
-@Retention(RetentionPolicy.CLASS)
+@Retention(RetentionPolicy.RUNTIME)
 @Target({ElementType.FIELD, ElementType.METHOD, ElementType.CONSTRUCTOR, ElementType.PARAMETER})
 public @interface ValueContext {
-    public PropertyIsApplicableFor propertyIsApplicableFor() default PropertyIsApplicableFor.NOT_SPECIFIED;
+    public PropertyIsApplicableFor value() default PropertyIsApplicableFor.NOT_SPECIFIED;
 
     public String description() default "";
 

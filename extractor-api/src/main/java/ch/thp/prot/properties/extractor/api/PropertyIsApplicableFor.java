@@ -11,7 +11,8 @@ public enum PropertyIsApplicableFor {
      */
     APPLICATION,
     /**
-     * A property marked with this value must be set with different values on any new environment
+     * A property marked with this value must be set with different values on any new environment but is the same for
+     * one or more nodes.
      */
     ENVIRONMENT,
     /**

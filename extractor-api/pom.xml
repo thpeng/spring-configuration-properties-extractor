@@ -3,7 +3,7 @@
          xmlns="http://maven.apache.org/POM/4.0.0"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <parent>
-        <artifactId>spring-configuration-properties-extraxtor-plugin</artifactId>
+        <artifactId>spring-configuration-properties-extractor-parent</artifactId>
         <groupId>ch.thp.proto</groupId>
         <version>1.0.0-SNAPSHOT</version>
     </parent>

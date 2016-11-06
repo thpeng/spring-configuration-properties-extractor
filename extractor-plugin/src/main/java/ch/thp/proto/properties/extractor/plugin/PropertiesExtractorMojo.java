@@ -1,5 +1,7 @@
 package ch.thp.proto.properties.extractor.plugin;
 
+import ch.thp.prot.properties.extractor.api.PropertyIsApplicableFor;
+import ch.thp.prot.properties.extractor.api.ValueContext;
 import com.google.common.base.Joiner;
 import com.google.common.io.Files;
 import org.apache.maven.artifact.DependencyResolutionRequiredException;
@@ -18,6 +20,8 @@ import org.reflections.util.FilterBuilder;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.util.Assert;
 
+import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 import java.io.File;
 import java.io.IOException;
 import java.lang.reflect.Constructor;
@@ -79,7 +83,8 @@ public class PropertiesExtractorMojo extends AbstractMojo {
             getLog().debug("combinedLoader : " + combinedLoader);
 
 
-            getLog().debug("packagescan: " + packageScan + " projectClasspath" + projectClasspathList.stream().map(s -> s.toString()).collect(Collectors.toList()));
+            getLog().debug("packagescan: " + packageScan + " projectClasspath" + projectClasspathList.stream()
+                    .map(s -> s.toString()).collect(Collectors.toList()));
             Class<Value> springAtValueAnnotation = Value.class;
             Reflections reflections = new Reflections(new ConfigurationBuilder()
 
@@ -108,13 +113,15 @@ public class PropertiesExtractorMojo extends AbstractMojo {
                 java.lang.reflect.Parameter[] parameters = method.getParameters();
                 if (method.getParameters().length == 1 && method.isAnnotationPresent(springAtValueAnnotation)) {
                     getLog().debug("found atValue on method");
-                    propertyExpressions.add(new ClassExpressionTuple(method.getDeclaringClass(), method.getAnnotation(springAtValueAnnotation).value()));
+                    propertyExpressions.add(new ClassExpressionTuple(method.getDeclaringClass(),
+                            method.getAnnotation(springAtValueAnnotation).value(), method.getAnnotation(ValueContext.class)));
                 } else {
                     for (java.lang.reflect.Parameter parameter : parameters) {
                         if (parameter.isAnnotationPresent(springAtValueAnnotation)) {
                             getLog().debug("found atValue on methodParam");
 
-                            propertyExpressions.add(new ClassExpressionTuple(method.getDeclaringClass(), parameter.getAnnotation(springAtValueAnnotation).value()));
+                            propertyExpressions.add(new ClassExpressionTuple(method.getDeclaringClass(),
+                                    parameter.getAnnotation(springAtValueAnnotation).value(), parameter.getAnnotation(ValueContext.class)));
                         }
                     }
                 }
@@ -125,18 +132,23 @@ public class PropertiesExtractorMojo extends AbstractMojo {
                     if (parameter.isAnnotationPresent(springAtValueAnnotation)) {
                         getLog().debug("found atValue on constructorParam");
 
-                        propertyExpressions.add(new ClassExpressionTuple(constructor.getDeclaringClass(), parameter.getAnnotation(springAtValueAnnotation).value()));
+                        propertyExpressions.add(new ClassExpressionTuple(constructor.getDeclaringClass(),
+                                parameter.getAnnotation(springAtValueAnnotation).value(), parameter.getAnnotation(ValueContext.class)));
                     }
                 }
             }
-            propertyExpressions.addAll(fields.stream().map(field -> new ClassExpressionTuple(field.getDeclaringClass(), field.getAnnotation(springAtValueAnnotation).value())).collect(Collectors.toList()));
+            propertyExpressions.addAll(fields.stream().map(field -> new ClassExpressionTuple(field.getDeclaringClass(),
+                    field.getAnnotation(springAtValueAnnotation).value(), field.getAnnotation(ValueContext.class))).collect(Collectors.toList()));
             Map<String, PropertyExpressionData> expressions = new HashMap<>();
             for (ClassExpressionTuple expression : propertyExpressions) {
+                getLog().error(expression.toString());
                 Matcher matcher = AT_VALUE_FORMAT.matcher(expression.getExpression());
                 if (matcher.find()) {
                     String found = matcher.group("expression");
                     String[] resultAfterSplit = found.split(":");
-                    PropertyExpressionData data = new PropertyExpressionData(resultAfterSplit[0]);
+                    PropertyExpressionData data = new PropertyExpressionData(resultAfterSplit[0],
+                            expression.getValueContext() == null ? PropertyIsApplicableFor.NOT_SPECIFIED :
+                                    expression.getValueContext().value());
                     if (resultAfterSplit.length == 2) {
                         data.pushDefaultValue(resultAfterSplit[1]).pushClass(expression.getCls().getSimpleName());
                     }
@@ -147,6 +159,10 @@ public class PropertiesExtractorMojo extends AbstractMojo {
                         }
                     } else {
                         expressions.put(resultAfterSplit[0], data.pushClass(expression.getCls().getSimpleName()));
+                    }
+                    if (expression.getValueContext() != null) {
+                        getLog().error("found valuecontext");
+                        expressions.get(resultAfterSplit[0]).pushDescription(expression.getValueContext().description());
                     }
                 }
             }
@@ -170,10 +186,13 @@ public class PropertiesExtractorMojo extends AbstractMojo {
     private static class ClassExpressionTuple {
         private Class<?> cls;
         private String expression;
+        private ValueContext valueContext;
 
-        ClassExpressionTuple(Class<?> cls, String expression) {
+        ClassExpressionTuple(@Nonnull Class<?> cls, @Nonnull String expression, @Nullable ValueContext valueContext) {
             this.cls = cls;
             this.expression = expression;
+            this.valueContext = valueContext;
+
         }
 
         public Class<?> getCls() {
@@ -182,6 +201,10 @@ public class PropertiesExtractorMojo extends AbstractMojo {
 
         public String getExpression() {
             return expression;
+        }
+
+        public ValueContext getValueContext() {
+            return valueContext;
         }
 
         @Override
@@ -208,6 +231,7 @@ public class PropertiesExtractorMojo extends AbstractMojo {
             return "ClassExpressionTuple{" +
                     "cls=" + cls +
                     ", expression='" + expression + '\'' +
+                    ", valueContext=" + valueContext +
                     '}';
         }
     }
@@ -216,16 +240,19 @@ public class PropertiesExtractorMojo extends AbstractMojo {
 
         private static final String REPLACE_ME = "#<replace-me>";
 
-        private static final String FORMAT = "#default values are: '%1$s', found in classes: %2$s\n" +
-                "%3$s%4$s=@%4$s@\n";
+        private static final String FORMAT = "#context: '%1$s', default values are: '%2$s', found in classes: %3$s, description: '%4$s'\n" +
+                "%5$s%6$s=@%6$s@\n";
         private String expression;
         private Set<String> defaultValues = new HashSet<>();
         private Set<String> classes = new HashSet<>();
+        private PropertyIsApplicableFor propertyIsApplicableFor;
+        private Set<String> descriptions = new HashSet<>();
 
 
-        PropertyExpressionData(String expression) {
+        PropertyExpressionData(@Nonnull String expression, @Nullable PropertyIsApplicableFor propertyIsApplicableFor) {
             Assert.notNull(expression);
             this.expression = expression;
+            this.propertyIsApplicableFor = propertyIsApplicableFor;
         }
 
         public boolean hasDefaultValues() {
@@ -234,6 +261,11 @@ public class PropertiesExtractorMojo extends AbstractMojo {
 
         public PropertyExpressionData pushDefaultValue(String value) {
             this.defaultValues.add(value);
+            return this;
+        }
+
+        public PropertyExpressionData pushDescription(String description) {
+            this.descriptions.add(description);
             return this;
         }
 
@@ -249,8 +281,10 @@ public class PropertiesExtractorMojo extends AbstractMojo {
 
         public String render() {
             return String.format(FORMAT,
+                    propertyIsApplicableFor,
                     hasDefaultValues() ? getDefaultValuesAsString() : "none set",
                     Joiner.on(", ").join(classes),
+                    Joiner.on("', '").join(descriptions),
                     hasDefaultValues() ? REPLACE_ME : "",
                     expression);
         }
